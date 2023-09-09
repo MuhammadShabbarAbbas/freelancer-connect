@@ -17,14 +17,15 @@ class FreelancerIdentity extends AbstractProvider {
      * scopes, prompt and advanced_scopes can be modified by
      * $options array on construct
      */
-    public $scopes = ['basic'];
-    public $prompt = ['select_account', 'consent'];
-    public $advancedScopes = [];
+    public array $scopes = ['basic'];
+    public array $prompt = ['select_account', 'consent'];
+    public array $advancedScopes = [];
 
-    private $separator = ' ';
-    private $responseCode = 'error_code';
-    private $responseError = 'message';
-    private $ownerId = 'email';
+    private string $separator = ' ';
+    private string $responseCode = 'error_code';
+    private string $responseError = 'message';
+    private string $ownerId = 'email';
+    public AccessToken $accessToken;
 
     /**
      * @throws FreelancerIdentityException when no baseUri option
@@ -57,16 +58,12 @@ class FreelancerIdentity extends AbstractProvider {
 
             $params = $grant->prepareRequestParameters($params, $options);
             $request = $this->getAccessTokenRequest($params);
-            $response = $this->getResponse($request);
+            $response = $this->getParsedResponse($request);
             $this->accessTokenArray = $this->prepareAccessTokenResponse($response);
             $this->accessToken = $this->createAccessToken($this->accessTokenArray, $grant);
 
             return $this->accessToken;
-        } catch (BadMethodCallException $e) {
-            throw new FreelancerIdentityException($e->getMessage());
-        } catch (InvalidGrantException $e) {
-            throw new FreelancerIdentityException('Invalid grant type.');
-        } catch (InvalidArgumentException $e) {
+        } catch (BadMethodCallException|InvalidArgumentException $e) {
             throw new FreelancerIdentityException($e->getMessage());
         } catch (Exception $e) {
             throw new FreelancerIdentityException('Unknown error occurred.');
@@ -81,7 +78,8 @@ class FreelancerIdentity extends AbstractProvider {
         }
     }
 
-    public function getAuthenticatedRequest($method, $url, array $options = []) {
+    public function getAuthenticatedRequest($method, $url, $token, array $options = []): \Psr\Http\Message\RequestInterface
+    {
         if (!isset($this->accessToken)) {
             throw new FreelancerIdentityException('No access token set.');
         }
@@ -94,24 +92,32 @@ class FreelancerIdentity extends AbstractProvider {
      *
      * @return array
      */
-    public function getDefaultScopes() {
+    public function getDefaultScopes(): array
+    {
         return $this->scopes;
     }
 
-    public function getResourceOwner() {
-        $response = $this->fetchResourceOwnerDetails();
+    /**
+     * @throws FreelancerIdentityException
+     */
+    public function getResourceOwner($token): GenericResourceOwner
+    {
+        $response = $this->fetchResourceOwnerDetails($this->accessToken);
         return $this->createResourceOwner($response, $this->accessToken);
     }
 
-    public function getBaseAuthorizationUrl() {
+    public function getBaseAuthorizationUrl(): string
+    {
         return $this->baseUri.'/oauth/authorise';
     }
 
-    public function getBaseAccessTokenUrl(array $params) {
+    public function getBaseAccessTokenUrl(array $params): string
+    {
         return $this->baseUri.'/oauth/token';
     }
 
-    public function getResourceOwnerDetailsUrl(\League\OAuth2\Client\Token\AccessToken $token) {
+    public function getResourceOwnerDetailsUrl(\League\OAuth2\Client\Token\AccessToken $token): string
+    {
         return $this->baseUri.'/oauth/me';
     }
 
@@ -128,14 +134,16 @@ class FreelancerIdentity extends AbstractProvider {
      *
      * @return array
      */
-    protected function getAuthorizationParameters(array $options) {
+    protected function getAuthorizationParameters(array $options): array
+    {
         $options = parent::getAuthorizationParameters($options);
         $options += ['prompt' => implode($this->separator, $this->prompt)];
         $options += ['advanced_scopes' => implode($this->separator, $this->advancedScopes)];
         return $options;
     }
 
-    protected function getScopeSeparator() {
+    protected function getScopeSeparator(): string
+    {
         return $this->separator;
     }
 
@@ -143,7 +151,8 @@ class FreelancerIdentity extends AbstractProvider {
      * all requests made by getAuthenticatedRequest() with $token passed in
      * will have bearer token set in their headers
      */
-    protected function getAuthorizationHeaders($token = null) {
+    protected function getAuthorizationHeaders($token = null): array
+    {
         if ($token) {
             return [
                 'Authorization' => 'Bearer '.$token->getToken(),
@@ -162,19 +171,30 @@ class FreelancerIdentity extends AbstractProvider {
             // wrap the repsonse error code into exception as exception code
             if (isset($data[$this->responseCode])) {
                 $errorCodeId = FreelancerIdentityException::ERROR_MAPPING[$data[$this->responseCode]];
+                throw new FreelancerIdentityException($data[$this->responseError], $errorCodeId);
             }
-            throw new FreelancerIdentityException($data[$this->responseError], $errorCodeId);
+            throw new FreelancerIdentityException($data[$this->responseError]);
         }
     }
 
-    protected function fetchResourceOwnerDetails() {
+    /**
+     * @throws FreelancerIdentityException
+     */
+    protected function fetchResourceOwnerDetails($token) {
         $url = $this->getResourceOwnerDetailsUrl($this->accessToken);
-        $request = $this->getAuthenticatedRequest(self::METHOD_GET, $url);
-        return $this->getResponse($request);
+        $request = $this->getAuthenticatedRequest(self::METHOD_GET, $url, $this->accessToken);
+        $response = $this->getParsedResponse($request);
+        if (false === is_array($response)) {
+            throw new UnexpectedValueException(
+                'Invalid response received from Authorization Server. Expected JSON.'
+            );
+        }
+        return $response;
     }
 
-    protected function createResourceOwner(array $response, AccessToken $token) {
-        return new GenericResourceOwner($response, $response[$this->ownerId]);
+    protected function createResourceOwner(array $response, AccessToken $token): GenericResourceOwner
+    {
+        return new GenericResourceOwner($response, $this->ownerId);
     }
 
     protected function prepareAdvancedScopes() {
