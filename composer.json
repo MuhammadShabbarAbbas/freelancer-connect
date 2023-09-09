@@ -1,5 +1,7 @@
 {
     "require": {
-        "pecee/simple-router": "5.3.0.5"
+        "pecee/simple-router": "5.3.0.5",
+        "league/oauth2-client": "^2.7",
+        "vlucas/phpdotenv": "^5.5"
     }
 }
